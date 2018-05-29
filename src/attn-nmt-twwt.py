@@ -1,0 +1,438 @@
+"""
+Tied weights
+python attn-nmt.py --devid -1 --nhid 200 --nlayers 4 --epochs 15 --lr 1e-3 --wd 0 --bsz 64 --clip 5 --maxlen 20 --minfreq 5 --tf 0 --beam 100
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+import torchtext
+from torchtext import data
+from torchtext import datasets
+from torch.autograd import Variable
+
+import spacy, random
+import numpy as np
+from tqdm import tqdm
+
+# Some utility functions
+def tokenize_de(text):
+    return [tok.text for tok in spacy_de.tokenizer(text)]
+
+def tokenize_en(text):
+    return [tok.text for tok in spacy_en.tokenizer(text)]
+
+global USE_CUDA
+USE_CUDA = torch.cuda.is_available()
+DEVICE = 0 if USE_CUDA else -1
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--devid", type=int, default=DEVICE)
+
+    parser.add_argument("--nhid", type=int, default=200)
+    parser.add_argument("--nlayers", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=15)
+
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--wd", type=float, default=0)
+
+    parser.add_argument("--bsz", type=int, default=64)
+    parser.add_argument("--clip", type=float, default=5)
+    
+    parser.add_argument("--maxlen", type=float, default=20)
+    parser.add_argument("--minfreq", type=float, default=5)
+    parser.add_argument("--beam", type = int, default=100)
+    
+    return parser.parse_args()
+
+args = parse_args()
+
+spacy_de = spacy.load('de')
+spacy_en = spacy.load('en')
+
+DE = data.Field(tokenize=tokenize_de)
+EN = data.Field(tokenize=tokenize_en, init_token = '<s>', eos_token = '</s>') # only target needs BOS/EOS
+train, val, test = datasets.IWSLT.splits(exts=('.de', '.en'), fields=(DE, EN), filter_pred=lambda x: len(vars(x)['src']) <= args.maxlen and len(vars(x)['trg']) <= args.maxlen)
+
+DE.build_vocab(train.src, min_freq=args.minfreq)
+EN.build_vocab(train.trg, min_freq=args.minfreq)
+
+train_iter, val_iter = data.BucketIterator.splits((train, val), batch_size=args.bsz, device=args.devid, repeat=False, sort_key=lambda x: len(x.src))
+
+def str_to_tensor(string, src_lang = DE):
+    string = string.split()
+    word_ids = [src_lang.vocab.stoi[word] for word in string]
+    word_tensor = Variable(torch.LongTensor(word_ids))
+    return word_tensor
+    
+def tensor_to_kaggle(tensor, trg_lang = EN):
+    return '|'.join([trg_lang.vocab.itos[word_id] for word_id in tensor])
+    
+def tensor_to_str(tensor, trg_lang = EN):
+    return ' '.join([trg_lang.vocab.itos[word_id] for word_id in tensor])
+
+class Encoder(nn.Module):
+    """ Module for encoding source sentences """
+    def __init__(self, src_vsize, hidden_dim, n_layers = args.nlayers):
+        super(Encoder, self).__init__()
+        
+        self.src_vsize = src_vsize
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.embeddings = nn.Embedding(src_vsize, hidden_dim)
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim, num_layers = n_layers, batch_first = False)
+        
+    def forward(self, src_words):
+        embedded = self.embeddings(src_words)
+        out, hdn = self.lstm(embedded)
+        return out, hdn
+
+class Attention(nn.Module):
+    """ Module for computing attention """
+    def __init__(self, method, hidden_dim, batch_size = args.nlayers):
+        super(Attention, self).__init__()
+        
+        self.method = method
+        self.hidden_dim = hidden_dim
+        self.batch_size = batch_size
+        
+        if self.method == 'general':
+            self.attn = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+
+        elif self.method == 'concat':
+            self.attn = nn.Linear(self.hidden_dim * 2, self.hidden_size, bias=False)
+            self.v = nn.Parameter(torch.FloatTensor(self.batch_size, 1, hidden_dim))
+        
+        elif self.method != 'dot':
+            print("No method chosen from ['general', 'concat', 'dot']. Defaulting to 'dot'.")
+            self.method = 'dot'
+
+    def forward(self, hidden, encoder_outputs):
+        """ Get attention weights """
+        
+        attn_energies = self.score(hidden, encoder_outputs)
+        return F.softmax(attn_energies, dim = 2)
+    
+    def score(self, hidden, encoder_output):
+        """ 
+        Dot (fastest method): a dot product between the decoder hidden state and the encoder final hidden state 
+        General: a dot product between the decoder hidden state and a linear transform of the encoder final hidden state
+        Concat: a dot product between a new parameter v and a linear transform of the states concatenated together.
+        """
+        
+        if self.method == 'dot':
+            energy = hidden.bmm(encoder_output)
+            return energy
+
+class AttentionDecoder(nn.Module):
+    def __init__(self, hidden_dim, trg_vsize, n_layers = args.nlayers, dropout_p=0.1, method = 'dot'):
+        super(AttentionDecoder, self).__init__()
+        
+        # Define parameters
+        self.hidden_dim = hidden_dim
+        self.trg_vsize = trg_vsize
+        self.n_layers = n_layers
+        self.dropout_p = dropout_p
+        
+        # Define layers
+        self.embedding = nn.Embedding(trg_vsize, hidden_dim)
+        self.dropout = nn.Dropout(dropout_p)
+        self.attn = Attention(method, hidden_dim)
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim, n_layers, dropout=dropout_p)
+        self.downsample = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.proj = nn.Linear(hidden_dim, trg_vsize)
+    
+    def forward(self, trg_words, hidden, encoder_outputs):
+        # Get the embedding of the current input word (last output word)
+        embedded = self.embedding(trg_words) 
+        embedded = self.dropout(embedded)
+
+        # Get hidden state from input word and last hidden state
+        lstm_out, new_hidden = self.lstm(embedded, hidden)
+
+        # Calculate attention from current lstm out and encoder output
+        attn_weights = self.attn(new_hidden[-1].transpose(0,1), encoder_outputs.transpose(0,1).transpose(1,2))
+        context = attn_weights.bmm(encoder_outputs.transpose(0, 1)).transpose(0, 1)
+
+        # (Luong eq. 5)
+        concat_input = torch.cat((lstm_out, context), 2)
+        concat_output = F.tanh(self.downsample(concat_input))
+
+        # (Luong eq. 6, no more softmax)
+        output = self.proj(concat_output)
+        output, new_hidden, attn_weights.transpose(0,1) 
+        return output, new_hidden, attn_weights.transpose(0,1) 
+        
+class LuongAttention(nn.Module):
+    """ Super class """
+    def __init__(self, src_vsize, trg_vsize, hidden_dim, n_layers = 1):
+        super(LuongAttention, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.encoder = Encoder(src_vsize, hidden_dim)
+        self.decoder = AttentionDecoder(hidden_dim, trg_vsize)
+
+        # Tie weights.
+        self.decoder.proj.weight = self.decoder.embedding.weight
+
+class Trainer:
+    def __init__(self, train_iter, val_iter):
+        """ Initialize trainer class with Torchtext iterators """
+        self.train_iter = train_iter
+        self.val_iter = val_iter
+        
+    def train(self, num_epochs, model, lr = args.lr, weight_decay = args.wd, clip = args.clip):
+        """ Train model using SGD """
+        parameters = filter(lambda p: p.requires_grad, model.parameters())
+        optimizer = torch.optim.Adam(params = parameters, lr=lr, weight_decay = weight_decay)
+        best_ppl = 100
+        
+        # Binary masking
+        weight = torch.cuda.FloatTensor(len(EN.vocab.itos)).fill_(1) if USE_CUDA else torch.FloatTensor(len(EN.vocab.itos)).fill_(1)
+        self.padding_id = EN.vocab.stoi[EN.pad_token]
+        weight[self.padding_id] = 0
+        weight = Variable(weight)
+        if USE_CUDA: 
+            weight = weight.cuda()
+
+        criterion = nn.CrossEntropyLoss(weight = weight, size_average = False)
+        
+        all_losses = []
+        for epoch in tqdm(range(1, num_epochs + 1)):
+            model.train()
+
+            epoch_loss = []
+            for batch in tqdm(self.train_iter):
+                
+                optimizer.zero_grad()
+
+                batch_loss = self.train_batch(batch, criterion, model, teacher_forcing_ratio = args.tf)
+                batch_loss.backward()
+
+                nn.utils.clip_grad_norm(model.parameters(), clip)
+
+                optimizer.step()
+
+                epoch_loss.append(batch_loss.data[0])
+                
+                if len(epoch_loss) % 100 == 0:
+                    step = len(epoch_loss)
+                    cur_loss = np.mean(epoch_loss)
+                    train_ppl = np.exp(np.mean(epoch_loss))
+                    print('Step: {0} | Loss: {1} | Train PPL: {2}'.format(step, cur_loss, train_ppl))
+                    print('Wie würde eine solche Zukunft aussehen ? -->', self.translate('Wie würde eine solche Zukunft aussehen ?', model)[0])
+                
+            epoch_loss = np.mean(epoch_loss)
+            train_ppl = np.exp(epoch_loss)
+            val_ppl = self.validate(criterion, model)
+
+            print('Epoch: {0} | Loss: {1} | Train PPL: {2} | Val PPL: {3}'.format(epoch, epoch_loss, train_ppl, val_ppl))
+            all_losses.append(epoch_loss)
+            
+            # early stopping
+            if val_ppl < best_ppl:
+                best_ppl = val_ppl
+                self.best_model = model
+                
+        best_model = self.best_model
+        torch.save(best_model.cpu(), best_model.__class__.__name__ + ".pth")
+        return best_model.cpu(), all_losses     
+                
+    def train_batch(self, batch, criterion, model, teacher_forcing_ratio = 0):
+        """ Compute training batch using teacher forcing """
+        # Initialize batch loss to zero
+        target_length = batch.trg.size()[0]
+
+        # Run words through encoder
+        encoder_outputs, decoder_hidden = model.encoder(batch.src)
+
+        # Use teacher forcing or not
+        use_teacher_forcing = random.random() > teacher_forcing_ratio
+        if use_teacher_forcing:
+
+            # With teacher forcing, we use the previous true target as the next word input.
+            # This allows us to batch the softmax, resulting in large speed-ups.
+            shift = Variable(torch.LongTensor(batch.batch_size).fill_(self.padding_id)).unsqueeze(0)
+            if USE_CUDA:
+                shift = shift.cuda()
+
+            # Get outputs for batch, using encoder hidden as initialization for decoder hidden
+            decoder_outputs, decoder_hidden, decoder_attn = model.decoder(batch.trg, decoder_hidden, encoder_outputs)
+
+            # Reshape outputs, add shift tensor to targets
+            preds = decoder_outputs.view(target_length * batch.batch_size, -1)
+            targets = torch.cat((batch.trg[1:], shift), dim = 0).view(-1)
+
+            # Compute loss in a batch (more efficient than loop)
+            num_words = targets.ne(self.padding_id).float().sum()
+            loss = criterion(preds, targets)
+            loss /= num_words
+            return loss
+            
+        else:
+            
+            # Without teacher forcing: use network's own prediction as the next input
+            # Prepare input and output variables
+            loss = 0
+            decoder_inputs = batch.trg[0, :].unsqueeze(0)
+            
+            for trg_word_idx in range(target_length-1):
+                decoder_output, decoder_hidden, decoder_attn = model.decoder(decoder_inputs, decoder_hidden, encoder_outputs)
+
+                # Get most likely word index (highest value) from output
+                topk_probs, topk_words_idx = decoder_output.data.topk(1, dim = 2)
+
+                # Chosen words are next input
+                decoder_inputs = Variable(topk_words_idx).squeeze(2)
+
+                # Compute loss for all words in batch
+                num_words = batch.trg[trg_word_idx+1, :].ne(self.padding_id).float().sum()
+                loss += (criterion(decoder_output.squeeze(0), batch.trg[trg_word_idx+1, :]) / num_words) if num_words.data[0] > 0 else 0
+            loss /= batch.batch_size
+            return loss
+    
+    def translate(self, string, model, maxlength = None):  
+        """ Predict translation for an input string """
+        # Make string a tensor
+        tensor = str_to_tensor(string)
+        tensor = tensor.unsqueeze(1)
+        if USE_CUDA:
+            tensor = tensor.cuda()
+
+        # Run words through encoder
+        encoder_outputs, decoder_hidden = model.encoder(tensor)
+
+        # First token must always start of sentence <s>
+        decoder_inputs = Variable(torch.LongTensor([EN.vocab.stoi[EN.init_token]])).unsqueeze(0)
+        if USE_CUDA: 
+            decoder_inputs = decoder_inputs.cuda()
+
+        # if no maxlength, let it be 3*length original
+        maxlength = maxlength if maxlength else 3 * tensor.shape[0]
+        out_string = []
+
+        # Predict words until an <eos> token or maxlength,
+        for trg_word_idx in range(maxlength):
+            decoder_output, decoder_hidden, decoder_attn = model.decoder(decoder_inputs, decoder_hidden, encoder_outputs)
+
+            # Get most likely word index (highest value) from output
+            prob_dist = F.log_softmax(decoder_output, dim = 2)
+            top_probs, top_word_idx = prob_dist.data.topk(1, dim = 2)
+            ni = top_word_idx.squeeze(0)
+
+            decoder_inputs = Variable(ni) # Chosen word is next input
+            out_string.append(ni[0][0])
+
+            # Stop at end of sentence (not necessary when using known targets)
+            if ni[0][0] == EN.vocab.stoi[EN.eos_token]: 
+                break
+
+        out_string = tensor_to_str(out_string)
+        return out_string, decoder_attn
+    
+    def evaluate_kaggle(self, string, model, ngrams = 3, context = 0, top_k = args.beam):
+        """ Beam search the best starting trigrams for Kaggle input sentences """
+        # Convert string to tensor for embedding lookups
+        tensor = str_to_tensor(string)
+        tensor = tensor.unsqueeze(1)
+        if USE_CUDA:
+            tensor = tensor.cuda()
+
+        # Run words through encoder to get init hidden for decoder
+        encoder_outputs, encoder_hidden = model.encoder(tensor)
+
+        # Start collecting hiddens, prepare initial input variables
+        decoder_inputs = Variable(torch.LongTensor([EN.vocab.stoi[EN.init_token]])).unsqueeze(0)
+        if USE_CUDA: 
+            decoder_inputs = decoder_inputs.cuda()
+
+        # Compute the top K first words, so that we have something to work with
+        decoder_output, decoder_hidden, dec_attn = model.decoder(decoder_inputs, encoder_hidden, encoder_outputs)
+        prob_dist = F.log_softmax(decoder_output, dim = 2)
+        top_probs, top_word_idx = prob_dist.data.topk(top_k, dim = 2)
+        decoder_inputs = Variable(top_word_idx)
+        if USE_CUDA:
+            decoder_inputs = decoder_inputs.cuda()
+
+        # Begin table to keep our outputs, output_probs
+        outputs = [[word] for word in list(decoder_inputs.data[0][0])]
+        output_probs = list(top_probs[0][0])
+
+        # For using the correct hidden to predict next word. Initially it is 100x copy
+        all_hiddens = [decoder_hidden for _ in range(top_k)]
+
+        # Get top_k beams for 
+        for trg_word_idx in range(1, ngrams+context):
+            beam_search_idx, beam_search_probs = [], []
+            for k in range(top_k):
+                decoder_output, new_hdn, dec_attn = model.decoder(decoder_inputs[:, :, k], all_hiddens[k], encoder_outputs)
+                prob_dist = F.log_softmax(decoder_output, dim = 2)
+                top_probs, top_word_idx = prob_dist.data.topk(top_k, dim = 2)
+                beam_search_idx.append(list(top_word_idx[0][0]))
+                beam_search_probs.append(list(top_probs[0][0]))
+                all_hiddens[k] = new_hdn
+
+            # Top K words idx
+            next_word_idx = np.argsort(np.hstack(beam_search_probs))[::-1][:top_k] 
+
+            # Backpointers to the input word that each top word was drawn from
+            back_pointers = [int(np.floor(word / top_k)) for word in next_word_idx] 
+
+            # Update output list with new decoder inputs and their corresponding probabilities
+            next_words = [np.hstack(beam_search_idx)[ids] for ids in next_word_idx]
+            next_probs = [np.hstack(beam_search_probs)[ids] for ids in next_word_idx]
+            decoder_inputs = Variable(torch.LongTensor([int(word) for word in next_words])).unsqueeze(0).unsqueeze(0)
+            if USE_CUDA:
+                decoder_inputs = decoder_inputs.cuda()
+
+            # update hiddens, outputs
+            all_hiddens = [all_hiddens[pointer] for pointer in back_pointers]
+            outputs = [outputs[pointer] + [word] for pointer, word in zip(back_pointers, next_words)]
+            output_probs = [output_probs[pointer] + new_p for pointer, new_p in zip(back_pointers, next_probs)]
+
+        prob_sort_idx = np.argsort(output_probs)[::-1]
+        outputs = [outputs[idx] for idx in prob_sort_idx]
+        outputs = [output[:ngrams] for output in outputs]
+        out = [tensor_to_kaggle(tsr) for tsr in outputs]
+        return ' '.join(out)
+        
+    def validate(self, criterion, model):
+        """ Compute validation set perplexity """
+        loss = []
+        for batch in tqdm(self.val_iter):
+            batch_loss = self.train_batch(batch, criterion, model)
+            loss.append(batch_loss.data[0])
+        
+        val_ppl = np.exp(np.mean(loss))
+        return val_ppl
+    
+    def write_kaggle(self, test_file, model):
+        """ Write outputs to kaggle """
+        with open(test_file, 'r') as fh:
+            datasource = fh.read().splitlines()
+            
+        print('Evaluating on {0}...'.format(test_file))
+        with open('output.txt', 'w') as fh:
+            fh.write('id,word\n')
+            for idx, string in tqdm(enumerate(datasource)):
+                output = self.evaluate_kaggle(string, model)
+                output = str(idx+1) + ',' + self.escape_kaggle(output) + '\n'
+                fh.write(output)
+        print('File saved.')
+        
+    def escape_kaggle(self, l):
+        """ So kaggle doesn't yell at you when submitting results """
+        return l.replace("\"", "<quote>").replace(",", "<comma>")
+
+if __name__ == '__main__'
+    model = LuongAttention(src_vsize = len(DE.vocab.itos), trg_vsize = len(EN.vocab.itos), hidden_dim = args.nhid)
+    trainer = Trainer(train_iter, val_iter)
+    if USE_CUDA: model = model.cuda()
+    print('Using cuda: ', np.all([param.is_cuda for param in model.parameters()]))
+    model, all_losses = trainer.train(args.epochs, model)
+    if USE_CUDA: model = model.cuda() # don't know why but this will throw errors on GPU otherwise if not re-cuda'd
+    trainer.write_kaggle('../data/source_test.txt', model)
+    torch.save(model.cpu(), model.__class__.__name__ + ".pth")
