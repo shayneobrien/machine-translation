@@ -1,7 +1,7 @@
 Introduction
 ============
 
-In this problem set we train neural machine translation (NMT) systems
+In this repo we train neural machine translation (NMT) systems
 using end-to-end networks on the IWSLT-2016 dataset. This corpus
 consists of Ted Talks translated between German and English. The
 utterances of each language are aligned, which allows us to use it to
@@ -153,7 +153,7 @@ The simplest approach is to proceed in a greedy fashion, taking the most
 likely word under the model at each time step and feeding it back in as
 the next input until the end-of-sentence token is produced:
 
-$$\hat{e}_t = \operatorname*{argmax}_i p_{t,i}^{(e)}$$
+$$\hat{e}_t = \text{argmax}_i p_{t,i}^{(e)}$$
 
 This is not guaranteed to produce the highest-scoring sentence, though,
 since in some cases the selection of a lower-probability word at a given
@@ -181,7 +181,7 @@ normalization have been proposed, but we take the simplest approach,
 which is to divide the total log-probability of the sentence by the
 number of words to get an average per-word log-probability.
 
-$$\hat{E} = \operatorname*{argmax}_E log P(E|F) / |E|$$
+$$\hat{E} = \text{argmax}_E log P(E|F) / |E|$$
 
 Following (Sutskever et al., 2014) we use beam size of 10. And, in the
 interest of speed – when extending candidates with new words at each
@@ -204,7 +204,7 @@ model:
     We also implemented the attention scoring as a multi-layer
     perceptron as described by (Bahdanau et al., 2014):
 
-    $$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \operatorname*{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$
+    $$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$
 
 2.  We tried a range of learning rate schedulers – train for a fixed
     number of epochs (4, 8, 10) and then decay by 0.5 each epoch after
@@ -252,32 +252,7 @@ decay rate that seemed to work well for the 500-unit LSTM seemed too
 slow for the 200-unit model, etc. Given indefinite resources, ideally we
 would run a broad grid search to pick the best model.
 
-See the appendix for visualizations of the attention weights and
-comparisons between the translations produced by the beam coder and the
-Google Translate predictions.
-
-Conclusion
-==========
-
-We trained two classes of models – a basic encoder-decoder architecture
-as described by (Sutskever et al., 2014) and a series of models that use
-dot-product attention to give the decoder a more flexible representation
-of the input. Though we experimented with more complex architectures –
-bidirectional LSTMs and multilayer perceptrons for attention weighting –
-our best-performing models used the basic dot-product attention.
-
-Attention visualizations
-========================
-
-We can visualize the dot-product attention by plotting the weights
-assigned to the encoder hidden states for each step during decoding
-(using greedy decoding, here).
-
-![image](att1.png)  
-![image](att2.png)  
-![image](att3.png)  
-![image](att4.png)  
-![image](att5.png)  
+See the following sections for visualizations of the attention weights and comparisons between the translations produced by the beam coder and the Google Translate predictions.
 
 Translation examples
 ====================
@@ -285,42 +260,34 @@ Translation examples
 We can compare the translations produced by the beam search decoder to
 the predictions from Google translate:
 
-1.  -   **Source**:
-        `Arbeit kam später, Heiraten kam später, Kinder kamen später, selbst der Tod kam später.`
+*Source* | *Our Model* | *Google*
+:---: | :---: | :---: |
+Arbeit kam später, Heiraten kam später, Kinder kamen später, selbst der Tod kam später. | work came later , `<unk>` came later later , children came later later , even the death came later . | Work came later, marriages came later, children came later, even death came later
+Das ist es , was Psychologen einen Aha-Moment nennen. | That ’s what psychologists call a `<unk>` call . | That’s what psychologists call an aha moment.
+Dies ist nicht meine Meinung. Das sind Fakten.| This is not my opinion . These are facts . | This is not my opinion. These are facts.
+In den 20ern sollte man sich also weiterbilden über den Körper und die eigenen Möglichkeiten | So in the `<unk>` , you should be thinking about the body and the own possibilities . | In the 20’s you should continue to educate yourself about the body and your own possibilities
+Wie würde eine solche Zukunft aussehen? | What would such a future look like ? | What would such a future look like?
 
-    -   **Our model**:
-        `work came later , <unk> came later later , children came later later , even the death came later .`
+Attention visualizations
+========================
 
-    -   **Google**:
-        `Work came later, marriages came later, children came later, even death came later`
+We can visualize the dot-product attention by plotting the weights
+assigned to the encoder hidden states for each step during decoding.
 
-2.  -   **Source**:
-        `Das ist es , was Psychologen einen Aha-Moment nennen .`
+'Dies ist nicht meine Meinung. Das sind Fakten' --> 'This is not my opinion. These are facts.'
+![](imgs/att1.png)  
 
-    -   **Our model**: `That ’s what psychologists call a <unk> call .`
+'Ok, das ist xwar leicht gesagt, aber macht keinen Fehler, denn es geht um sehr viel.' --> 'Ok, that 's easy to say, but do not make a mistake, because it 's about a lot .'
+![](imgs/att3.png)  
 
-    -   **Google**: `That’s what psychologists call an aha moment.`
+Conclusion
+==========
 
-3.  -   **Source**: `Dies ist nicht meine Meinung . Das sind Fakten .`
-
-    -   **Our model**: `This is not my opinion . These are facts .`
-
-    -   **Google**: `This is not my opinion. These are facts.`
-
-4.  -   **Source**:
-        `In den 20ern sollte man sich also weiterbilden über den Körper und die eigenen Möglichkeiten`
-
-    -   **Our model**:
-        `So in the <unk> , you should be thinking about the body and the own possibilities .`
-
-    -   **Google**:
-        `In the 20’s you should continue to educate yourself about the body and your own possibilities`
-
-5.  -   **Source**: `Wie würde eine solche Zukunft aussehen ?`
-
-    -   **Our model**: `What would such a future look like ?`
-
-    -   **Google**: `What would such a future look like?`
+We trained two classes of models – a basic encoder-decoder architecture
+as described by (Sutskever et al., 2014) and a series of models that use
+dot-product attention to give the decoder a more flexible representation
+of the input. Though we experimented with more complex architectures such as
+bidirectional LSTMs with multilayer perceptrons for attention weighting, our best-performing models used the basic dot-product attention.
 
 References
 ==========
