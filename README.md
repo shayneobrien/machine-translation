@@ -185,23 +185,20 @@ model:
     the hidden layer $h_t^e$ is dotted with the hidden states at each
     time-step from the encoder:
 
-    $\text{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$
+    <img src="http://latex.codecogs.com/gif.latex?$\text{attn\_score}(H^{(f)},&space;h_t^{(e)})&space;:=&space;H_j^{(f)&space;\intercal}h_t^{(e)}$" title="$\text{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$" />
 
     We also implemented the attention scoring as a multi-layer
     perceptron as described by (Bahdanau et al., 2014):
 
-    $$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$
+    <img src="http://latex.codecogs.com/gif.latex?$$\text{attn\_score}(h_t^{(e)},&space;h_j^{(f)})&space;:=&space;w_{a2}^{\intercal}&space;\text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" title="$$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" />
 
-2.  We tried a range of learning rate schedulers – train for a fixed
-    number of epochs (4, 8, 10) and then decay by 0.5 each epoch after
-    that (as described in the reference model); decay by 0.5 every $N$
-    epochs, where $N \in \{2, 3, 4\}$; and various values for the decay
-    ratio gamma.
+2.  We tried a range of learning rate schedulers, which train for a fixed
+    number of epochs (e.g., {4, 8, 10}) and then decay the learning rate by 
+    a factor of 0.5 every _N_ epochs after
+    that. We tried _N_ = {2, 3, 4}.
 
 3.  We implemented the decoder as a bidirectional LSTM as described by
-    (Bahdanau et al., 2014) which in theory should allow the encoder to
-    capture information about both the left- and right-hand contexts at
-    each time step.
+    (Bahdanau et al., 2014).
 
 4.  Last, we experimented with a wide range of hyperparameter settings:
 
@@ -261,9 +258,11 @@ We can visualize the dot-product attention by plotting the weights
 assigned to the encoder hidden states for each step during decoding.
 
 'Dies ist nicht meine Meinung. Das sind Fakten' --> 'This is not my opinion. These are facts.'
+
 ![](imgs/att1.png)  
 
 'Ok, das ist xwar leicht gesagt, aber macht keinen Fehler, denn es geht um sehr viel.' --> 'Ok, that 's easy to say, but do not make a mistake, because it 's about a lot .'
+
 ![](imgs/att3.png)  
 
 Conclusion
