@@ -185,12 +185,12 @@ model:
     the hidden layer $h_t^e$ is dotted with the hidden states at each
     time-step from the encoder:
 
-    <img src="http://latex.codecogs.com/gif.latex?$\text{attn\_score}(H^{(f)},&space;h_t^{(e)})&space;:=&space;H_j^{(f)&space;\intercal}h_t^{(e)}$" title="$\text{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$" />
+    <p align="center"><img src="http://latex.codecogs.com/gif.latex?$\text{attn\_score}(H^{(f)},&space;h_t^{(e)})&space;:=&space;H_j^{(f)&space;\intercal}h_t^{(e)}$" title="$\text{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$" /></p>
 
     We also implemented the attention scoring as a multi-layer
     perceptron as described by (Bahdanau et al., 2014):
 
-    <img src="http://latex.codecogs.com/gif.latex?$$\text{attn\_score}(h_t^{(e)},&space;h_j^{(f)})&space;:=&space;w_{a2}^{\intercal}&space;\text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" title="$$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" />
+    <p align="center"><img src="http://latex.codecogs.com/gif.latex?$$\text{attn\_score}(h_t^{(e)},&space;h_j^{(f)})&space;:=&space;w_{a2}^{\intercal}&space;\text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" title="$$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \text{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$" /></p>
 
 2.  We tried a range of learning rate schedulers, which train for a fixed
     number of epochs (e.g., {4, 8, 10}) and then decay the learning rate by 
@@ -257,13 +257,15 @@ Attention visualizations
 We can visualize the dot-product attention by plotting the weights
 assigned to the encoder hidden states for each step during decoding.
 
-'Dies ist nicht meine Meinung. Das sind Fakten' --> 'This is not my opinion. These are facts.'
+<p align="center">
+  'Dies ist nicht meine Meinung. Das sind Fakten' --> 'This is not my opinion. These are facts.'
+  <img src="imgs/att1.png">
+</p>
 
-![](imgs/att1.png)  
-
-'Ok, das ist xwar leicht gesagt, aber macht keinen Fehler, denn es geht um sehr viel.' --> 'Ok, that 's easy to say, but do not make a mistake, because it 's about a lot .'
-
-![](imgs/att3.png)  
+<p align="center">
+  'Oh, yeah! Ihr seid alle unglaublich' --> 'Oh, yeah! You're all incredible.'
+  <img src="imgs/att2.png">
+</p>
 
 Conclusion
 ==========
