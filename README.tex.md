@@ -199,12 +199,12 @@ model:
     the hidden layer $h_t^e$ is dotted with the hidden states at each
     time-step from the encoder:
 
-    $$\operatorname*{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$$
+    $\text{attn\_score}(H^{(f)}, h_t^{(e)}) := H_j^{(f) \intercal}h_t^{(e)}$
 
     We also implemented the attention scoring as a multi-layer
     perceptron as described by (Bahdanau et al., 2014):
 
-    $$\operatorname*{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \operatorname*{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$
+    $$\text{attn\_score}(h_t^{(e)}, h_j^{(f)}) := w_{a2}^{\intercal} \operatorname*{tanh}(W_{a1}[h_t^{(e)};h_j^{(f)}])$$
 
 2.  We tried a range of learning rate schedulers – train for a fixed
     number of epochs (4, 8, 10) and then decay by 0.5 each epoch after
@@ -238,15 +238,13 @@ final models were optimized with SGD starting with a learning rate of 1.
 Early stopping was used to identify the best-performing model on the
 validation set.
 
-[H]
-
-<span>llr</span> Model & & Perplexity\
-Encoder-Decoder (no attention) & & 15.612\
-Dot Attention – 300d embeddings, 500d LSTMs, Bidirectional encoder & &
-9.680\
-Dot Attention – 500d embeddings, 1000d LSTMs & & 9.672\
-Dot Attention – 200d embeddings, 200d LSTMs & & 9.636\
-Dot Attention – 300d embeddings, 500d LSTMs & & **9.501**\
+*Model* | *Accuracy* |
+:---: | :---: |
+Encoder-Decoder | 15.612
+Dot Attention – 300d embeddings, 500d LSTMs, Bidirectional encoder | 9.680
+Dot Attention – 500d embeddings, 1000d LSTMs | 9.672
+Dot Attention – 200d embeddings, 200d LSTMs | 9.636
+Dot Attention – 300d embeddings, 500d LSTMs | **9.501**
 
 Generally, we found that it was difficult to find a single learning rate
 scheduler that worked well for different hyperparameter settings – a
